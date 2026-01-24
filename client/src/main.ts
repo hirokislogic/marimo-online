@@ -44,6 +44,7 @@ let infoMsg = "接続中…";
 const wsProto = location.protocol === "https:" ? "wss" : "ws";
 const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
 
+
 ws.onopen = () => {
   connected = true;
   infoMsg = "接続済み。相手待ち…";
