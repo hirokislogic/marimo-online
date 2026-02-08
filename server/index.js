@@ -1,10 +1,11 @@
-console.log("### SERVER VERSION: ROOM-4P-DIRECTIONAL ###");
-
 import express from "express";
 import http from "http";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import { WebSocketServer } from "ws";
+
+console.log("### SERVER VERSION: ROOM-4P-DIRECTIONAL ###");
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,12 +14,42 @@ const PORT = process.env.PORT || 8080;
 const distPath = path.resolve(__dirname, "./dist");
 
 const app = express();
+
+// debug (STATICより前に置く)
+app.get("/__debug", (_, res) => {
+  const indexPath = path.join(distPath, "index.html");
+  let exists = false;
+  let firstLine = "";
+  let has4p = false;
+
+  try {
+    exists = fs.existsSync(indexPath);
+    if (exists) {
+      const html = fs.readFileSync(indexPath, "utf8");
+      firstLine = html.split("\n")[0].slice(0, 200);
+      has4p = html.includes("4人/ルーム制/指向性") || html.includes("ルーム作成");
+    }
+  } catch {}
+
+  res.json({
+    distPath,
+    indexPath,
+    indexExists: exists,
+    has4pMarker: has4p,
+    firstLine,
+  });
+});
+
 app.get("/health", (_, res) => res.status(200).send("ok"));
 app.use(express.static(distPath));
 app.get(/.*/, (_, res) => res.sendFile(path.join(distPath, "index.html")));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
+
+// （この下にあなたの wss.on("connection"... の処理が続く想定）
+server.listen(PORT, () => console.log(`Listening on :${PORT}`));
+
 
 /** ===== Game rules ===== */
 const Actions = [
@@ -468,3 +499,6 @@ function cryptoRandomId() {
 }
 
 server.listen(PORT, () => console.log(`Listening on :${PORT}`));
+
+console.log("### DISTPATH ###", distPath);
+
