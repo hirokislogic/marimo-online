@@ -1,3 +1,5 @@
+console.log("### SERVER VERSION: ROOM-4P-DIRECTIONAL ###");
+
 import express from "express";
 import http from "http";
 import path from "path";
