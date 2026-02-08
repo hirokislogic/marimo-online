@@ -8,29 +8,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 8080;
-
-const distPath = path.resolve(__dirname, "../client/dist");
-console.log("distPath =", distPath);
+const distPath = path.resolve(__dirname, "./dist");
 
 const app = express();
-
-// まず疎通確認用（ここが返ればHTTPは生きてる）
 app.get("/health", (_, res) => res.status(200).send("ok"));
-
-// 静的ファイル配信
 app.use(express.static(distPath));
-
-// SPA用：それ以外は index.html を返す（Express 5でも安全な正規表現）
-app.get(/.*/, (_, res) => {
-  res.sendFile(path.join(distPath, "index.html"));
-});
+app.get(/.*/, (_, res) => res.sendFile(path.join(distPath, "index.html")));
 
 const server = http.createServer(app);
-
-// WS は /ws
 const wss = new WebSocketServer({ server, path: "/ws" });
 
-/** ===== まりもゲーム ロジック ===== */
+/** ===== Game rules ===== */
 const Actions = [
   "CHARGE",
   "GUARD_CHARGE",
@@ -53,169 +41,428 @@ function cost(a) {
   }
 }
 
-// SEALは通常ビームを防ぐ（強ビームは防げない）
 function isGuardAction(a) {
   return a === "GUARD" || a === "BEAM_GUARD" || a === "GUARD_CHARGE" || a === "SEAL";
-}
-
-function judge(a0, a1) {
-  if (a0 === "BIG_BEAM" && a1 !== "BEAM_GUARD") return 0;
-  if (a1 === "BIG_BEAM" && a0 !== "BEAM_GUARD") return 1;
-
-  const normalDefenders = ["GUARD", "BEAM_GUARD", "GUARD_CHARGE", "SEAL"];
-  if (a0 === "BEAM" && !normalDefenders.includes(a1)) return 0;
-  if (a1 === "BEAM" && !normalDefenders.includes(a0)) return 1;
-
-  return null;
 }
 
 function newPlayer() {
   return {
     energy: 0,
+    alive: true,
     trapForcedGuard: false,
     usedGuardCharge: false,
     bannedActions: new Set(),
   };
 }
 
-const room = {
-  players: [null, null], // { ws }
-  state: { turn: 1, p: [newPlayer(), newPlayer()] },
-  pending: [null, null],
-  logs: [],
-};
-
-function addLog(text) {
-  room.logs.unshift(`Turn ${room.state.turn}: ${text}`);
-  if (room.logs.length > 12) room.logs.pop();
+function makeCode(len = 6) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
 }
+
+const rooms = new Map(); // code -> room
 
 function send(ws, obj) {
-  ws.send(JSON.stringify(obj));
+  if (ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
-function broadcast(obj) {
+function broadcast(room, obj) {
   const msg = JSON.stringify(obj);
-  for (const pl of room.players) {
-    if (pl?.ws?.readyState === 1) pl.ws.send(msg);
+  for (const slot of room.players) {
+    if (slot?.ws?.readyState === 1) slot.ws.send(msg);
   }
 }
 
-function resetMatch() {
-  room.state.turn = 1;
-  room.state.p = [newPlayer(), newPlayer()];
-  room.pending = [null, null];
-  room.logs = [];
-}
-
-function canSelect(i, a) {
-  const p = room.state.p[i];
-  if (a !== "BIG_BEAM" && p.bannedActions.has(a)) return false;
-  if (p.trapForcedGuard && !isGuardAction(a)) return false;
-  if (a === "GUARD_CHARGE" && p.usedGuardCharge) return false;
-  if (p.energy < cost(a)) return false;
-  return true;
-}
-
-function resolveTurn(a0, a1) {
-  const p0 = room.state.p[0];
-  const p1 = room.state.p[1];
-
-  addLog(`P1=${a0} / P2=${a1}`);
-
-  const w = judge(a0, a1);
-  if (w !== null) {
-    addLog(`P${w + 1} WIN!`);
-    return { winner: w };
-  }
-
-  if (p0.trapForcedGuard && isGuardAction(a0)) p0.trapForcedGuard = false;
-  if (p1.trapForcedGuard && isGuardAction(a1)) p1.trapForcedGuard = false;
-
-  if (a0 === "CHARGE") p0.energy += 1;
-  else if (a0 === "GUARD_CHARGE") { p0.energy += 1; p0.usedGuardCharge = true; }
-  else p0.energy -= cost(a0);
-
-  if (a1 === "CHARGE") p1.energy += 1;
-  else if (a1 === "GUARD_CHARGE") { p1.energy += 1; p1.usedGuardCharge = true; }
-  else p1.energy -= cost(a1);
-
-  if (a0 === "TRAP") p1.trapForcedGuard = true;
-  if (a1 === "TRAP") p0.trapForcedGuard = true;
-
-  if (a0 === "SEAL" && a1 !== "BIG_BEAM") { p1.bannedActions.add(a1); addLog(`P1 sealed ${a1}`); }
-  if (a1 === "SEAL" && a0 !== "BIG_BEAM") { p0.bannedActions.add(a0); addLog(`P2 sealed ${a0}`); }
-
-  room.state.turn += 1;
-  return { winner: null };
-}
-
-function snapshot() {
+function snapshot(room) {
   return {
-    turn: room.state.turn,
-    p: room.state.p.map((pl) => ({
-      energy: pl.energy,
-      trapForcedGuard: pl.trapForcedGuard,
-      usedGuardCharge: pl.usedGuardCharge,
-      bannedActions: [...pl.bannedActions],
+    code: room.code,
+    status: room.status, // "lobby" | "playing"
+    hostIndex: room.hostIndex,
+    turn: room.turn,
+    logs: room.logs,
+    players: room.players.map((slot, i) => ({
+      index: i,
+      connected: !!slot,
+      name: slot?.name ?? null,
+      alive: slot?.state?.alive ?? false,
+      energy: slot?.state?.energy ?? 0,
+      trapForcedGuard: slot?.state?.trapForcedGuard ?? false,
+      usedGuardCharge: slot?.state?.usedGuardCharge ?? false,
+      bannedActions: slot?.state ? [...slot.state.bannedActions] : [],
     })),
   };
 }
 
-function startTurn() {
-  broadcast({ type: "TURN_START", state: snapshot(), logs: room.logs });
+function createRoom() {
+  let code = makeCode();
+  while (rooms.has(code)) code = makeCode();
+
+  const room = {
+    code,
+    status: "lobby",
+    hostIndex: null,
+    players: [null, null, null, null], // { ws, id, name, state }
+    turn: 1,
+    pending: [null, null, null, null], // { action, target }
+    logs: [],
+  };
+
+  rooms.set(code, room);
+  return room;
 }
 
-wss.on("connection", (ws) => {
-  let slot = room.players[0] ? 1 : 0;
+function roomLog(room, text) {
+  room.logs.unshift(`Turn ${room.turn}: ${text}`);
+  if (room.logs.length > 20) room.logs.pop();
+}
 
-  if (room.players[slot]) {
-    send(ws, { type: "ERROR", message: "Room full" });
-    ws.close();
+function livingIndices(room) {
+  return room.players
+    .map((slot, i) => ({ slot, i }))
+    .filter(({ slot }) => slot && slot.state.alive)
+    .map(({ i }) => i);
+}
+
+function resetMatch(room) {
+  room.status = "playing";
+  room.turn = 1;
+  room.logs = [];
+  room.pending = [null, null, null, null];
+  for (let i = 0; i < 4; i++) {
+    if (room.players[i]) room.players[i].state = newPlayer();
+  }
+}
+
+function endMatchToLobby(room, message) {
+  room.status = "lobby";
+  room.pending = [null, null, null, null];
+  roomLog(room, message);
+  broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+}
+
+function needsTarget(a) {
+  return a === "BEAM" || a === "BIG_BEAM" || a === "TRAP" || a === "SEAL";
+}
+
+function canSelect(room, i, action, target) {
+  const slot = room.players[i];
+  if (!slot?.state?.alive) return { ok: false, reason: "not alive" };
+  const p = slot.state;
+
+  if (!Actions.includes(action)) return { ok: false, reason: "unknown action" };
+
+  // ban (BIG_BEAMは貫通)
+  if (action !== "BIG_BEAM" && p.bannedActions.has(action)) return { ok: false, reason: "sealed" };
+
+  // trap forced: must guard
+  if (p.trapForcedGuard && !isGuardAction(action)) return { ok: false, reason: "trap forced guard" };
+
+  // guard charge once
+  if (action === "GUARD_CHARGE" && p.usedGuardCharge) return { ok: false, reason: "guard charge used" };
+
+  // cost
+  if (p.energy < cost(action)) return { ok: false, reason: "not enough energy" };
+
+  // target validation
+  if (needsTarget(action)) {
+    if (target === null || target === undefined) return { ok: false, reason: "target required" };
+    if (target === i) return { ok: false, reason: "cannot target self" };
+    const t = room.players[target];
+    if (!t || !t.state.alive) return { ok: false, reason: "target not alive" };
+  }
+
+  return { ok: true };
+}
+
+function resolveTurn(room) {
+  // must have all living players' pending
+  const alive = livingIndices(room);
+  for (const i of alive) {
+    if (!room.pending[i]) return; // not ready
+  }
+
+  // chosen map
+  const chosen = new Map(); // i -> {action,target}
+  for (const i of alive) chosen.set(i, room.pending[i]);
+
+  roomLog(
+    room,
+    alive
+      .map((i) => {
+        const { action, target } = chosen.get(i);
+        return needsTarget(action) ? `P${i + 1}=${action}->P${target + 1}` : `P${i + 1}=${action}`;
+      })
+      .join(" / ")
+  );
+
+  // 1) trap forced check (self lose if not guard)
+  for (const i of alive) {
+    const p = room.players[i].state;
+    const { action } = chosen.get(i);
+    if (p.trapForcedGuard && !isGuardAction(action)) {
+      p.alive = false;
+      roomLog(room, `P${i + 1} lost by TRAP (didn't guard)`);
+    }
+  }
+
+  // recompute alive after trap kills
+  const alive2 = livingIndices(room);
+
+  // helper: is defender guarding this turn?
+  const isDefending = (idx) => {
+    if (!room.players[idx]?.state?.alive) return false;
+    const pick = chosen.get(idx);
+    if (!pick) return false;
+    return isGuardAction(pick.action);
+  };
+
+  // 2) attacks (directional)
+  const toKill = new Set();
+
+  for (const attacker of alive2) {
+    const pick = chosen.get(attacker);
+    if (!pick) continue;
+
+    const { action, target } = pick;
+
+    if (action === "BEAM") {
+      const def = chosen.get(target);
+      if (!def) continue;
+      const defended = isDefending(target); // GUARD/BEAM_GUARD/GUARD_CHARGE/SEAL
+      if (!defended) toKill.add(target);
+    }
+
+    if (action === "BIG_BEAM") {
+      const def = chosen.get(target);
+      if (!def) continue;
+
+      // BIG_BEAM clash only when mutual targeting with BIG_BEAM
+      const mutualClash =
+        def.action === "BIG_BEAM" &&
+        def.target === attacker;
+
+      if (mutualClash) {
+        roomLog(room, `BIG_BEAM clash between P${attacker + 1} and P${target + 1}`);
+        continue;
+      }
+
+      // only BEAM_GUARD blocks BIG_BEAM
+      if (def.action !== "BEAM_GUARD") toKill.add(target);
+    }
+  }
+
+  for (const i of toKill) {
+    if (room.players[i]?.state?.alive) {
+      room.players[i].state.alive = false;
+      roomLog(room, `P${i + 1} was hit!`);
+    }
+  }
+
+  // recompute alive after hits
+  const alive3 = livingIndices(room);
+
+  // 3) effects (SEAL / TRAP) applied by alive attackers only
+  for (const attacker of alive3) {
+    const pick = chosen.get(attacker);
+    if (!pick) continue;
+
+    const { action, target } = pick;
+
+    if (action === "TRAP") {
+      if (room.players[target]?.state?.alive) {
+        room.players[target].state.trapForcedGuard = true;
+        roomLog(room, `P${attacker + 1} trapped P${target + 1}`);
+      }
+    }
+
+    if (action === "SEAL") {
+      // SEAL is also defense for attacker (already handled by isGuardAction)
+      const targetPick = chosen.get(target);
+      if (targetPick && targetPick.action !== "BIG_BEAM") {
+        room.players[target].state.bannedActions.add(targetPick.action);
+        roomLog(room, `P${attacker + 1} sealed P${target + 1}'s ${targetPick.action}`);
+      }
+    }
+  }
+
+  // 4) energy update + trap clear (survivors only)
+  for (const i of alive3) {
+    const p = room.players[i].state;
+    const { action } = chosen.get(i);
+
+    // trap cleared if guarded this turn
+    if (p.trapForcedGuard && isGuardAction(action)) p.trapForcedGuard = false;
+
+    if (action === "CHARGE") p.energy += 1;
+    else if (action === "GUARD_CHARGE") {
+      p.energy += 1;
+      p.usedGuardCharge = true;
+    } else {
+      p.energy -= cost(action);
+    }
+  }
+
+  room.turn += 1;
+  room.pending = [null, null, null, null];
+
+  // 5) win check
+  const aliveFinal = livingIndices(room);
+  if (aliveFinal.length === 1) {
+    endMatchToLobby(room, `P${aliveFinal[0] + 1} WIN! (match ended)`);
+    return;
+  }
+  if (aliveFinal.length === 0) {
+    endMatchToLobby(room, `DRAW! (everyone down)`);
     return;
   }
 
-  room.players[slot] = { ws };
-  send(ws, { type: "WELCOME", playerIndex: slot });
+  broadcast(room, { type: "TURN_RESOLVED", state: snapshot(room) });
+}
 
-  if (room.players[0] && room.players[1]) {
-    resetMatch();
-    broadcast({ type: "MATCH_START" });
-    startTurn();
+/** ===== WS protocol =====
+ * client -> server:
+ *  {type:"CREATE_ROOM", name?}
+ *  {type:"JOIN_ROOM", code, name?}
+ *  {type:"START"}
+ *  {type:"ACTION", action, target?}
+ *
+ * server -> client:
+ *  {type:"WELCOME", youIndex, code}
+ *  {type:"ROOM_STATE", state}
+ *  {type:"ERROR", message}
+ */
+function safeName(s) {
+  if (typeof s !== "string") return "player";
+  const t = s.trim().slice(0, 12);
+  return t.length ? t : "player";
+}
+
+function findRoomByWs(ws) {
+  for (const room of rooms.values()) {
+    for (let i = 0; i < 4; i++) {
+      if (room.players[i]?.ws === ws) return { room, index: i };
+    }
   }
+  return null;
+}
+
+wss.on("connection", (ws) => {
+  send(ws, { type: "INFO", message: "connected" });
 
   ws.on("message", (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
+    if (msg.type === "CREATE_ROOM") {
+      const room = createRoom();
+      const slotIndex = room.players.findIndex((x) => x === null);
+      room.players[slotIndex] = {
+        ws,
+        id: cryptoRandomId(),
+        name: safeName(msg.name),
+        state: newPlayer(),
+      };
+      room.hostIndex = slotIndex;
+
+      send(ws, { type: "WELCOME", youIndex: slotIndex, code: room.code });
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+      return;
+    }
+
+    if (msg.type === "JOIN_ROOM") {
+      const code = String(msg.code || "").trim().toUpperCase();
+      const room = rooms.get(code);
+      if (!room) return send(ws, { type: "ERROR", message: "Room not found" });
+
+      // find empty slot
+      const slotIndex = room.players.findIndex((x) => x === null);
+      if (slotIndex === -1) return send(ws, { type: "ERROR", message: "Room full" });
+
+      room.players[slotIndex] = {
+        ws,
+        id: cryptoRandomId(),
+        name: safeName(msg.name),
+        state: room.status === "playing" ? newPlayer() : newPlayer(),
+      };
+
+      if (room.hostIndex === null) room.hostIndex = slotIndex;
+
+      send(ws, { type: "WELCOME", youIndex: slotIndex, code: room.code });
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+      return;
+    }
+
+    // below: must be in a room
+    const found = findRoomByWs(ws);
+    if (!found) return send(ws, { type: "ERROR", message: "Not in room" });
+    const { room, index } = found;
+
+    if (msg.type === "START") {
+      if (room.hostIndex !== index) return send(ws, { type: "ERROR", message: "Only host can start" });
+      const connectedCount = room.players.filter(Boolean).length;
+      if (connectedCount < 2) return send(ws, { type: "ERROR", message: "Need 2+ players" });
+
+      resetMatch(room);
+      roomLog(room, "Match started!");
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+      return;
+    }
+
     if (msg.type === "ACTION") {
-      if (!Actions.includes(msg.action)) return send(ws, { type: "ERROR", message: "Unknown action" });
-      if (!canSelect(slot, msg.action)) return send(ws, { type: "ERROR", message: "Action not allowed" });
+      if (room.status !== "playing") return send(ws, { type: "ERROR", message: "Match not started" });
 
-      room.pending[slot] = msg.action;
+      const action = msg.action;
+      const target = (msg.target === 0 || msg.target) ? Number(msg.target) : null;
 
-      if (room.pending[0] && room.pending[1]) {
-        const res = resolveTurn(room.pending[0], room.pending[1]);
+      const check = canSelect(room, index, action, target);
+      if (!check.ok) return send(ws, { type: "ERROR", message: `Action not allowed: ${check.reason}` });
 
-        broadcast({ type: "TURN_RESULT", state: snapshot(), logs: room.logs });
+      room.pending[index] = { action, target };
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
 
-        room.pending = [null, null];
-
-        if (res.winner !== null) {
-          resetMatch();
-          broadcast({ type: "MATCH_START" });
-        }
-        startTurn();
+      // resolve when all living have submitted
+      const alive = livingIndices(room);
+      const allReady = alive.every((i) => room.pending[i]);
+      if (allReady) {
+        resolveTurn(room);
+        broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
       }
+      return;
     }
   });
 
   ws.on("close", () => {
-    room.players[slot] = null;
-    resetMatch();
-    broadcast({ type: "INFO", message: "相手が切断しました。待機中…" });
+    const found = findRoomByWs(ws);
+    if (!found) return;
+    const { room, index } = found;
+
+    // mark disconnected slot empty
+    room.players[index] = null;
+    room.pending[index] = null;
+
+    // move host if needed
+    if (room.hostIndex === index) {
+      const next = room.players.findIndex(Boolean);
+      room.hostIndex = next === -1 ? null : next;
+    }
+
+    broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+
+    // delete empty rooms
+    if (room.players.every((x) => x === null)) {
+      rooms.delete(room.code);
+    }
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Listening on :${PORT}`);
-});
+function cryptoRandomId() {
+  // Node 24 ok without import; fallback if missing
+  try {
+    return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+  } catch {
+    return `${Date.now()}-${Math.random()}`;
+  }
+}
+
+server.listen(PORT, () => console.log(`Listening on :${PORT}`));
