@@ -498,7 +498,5 @@ function cryptoRandomId() {
   }
 }
 
-server.listen(PORT, () => console.log(`Listening on :${PORT}`));
-
 console.log("### DISTPATH ###", distPath);
 
