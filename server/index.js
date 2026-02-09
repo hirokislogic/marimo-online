@@ -529,64 +529,28 @@ function findRoomByWs(ws) {
 }
 
 wss.on("connection", (ws) => {
-  send(ws, { type: "INFO", message: "connected" });
+  // ここで接続を紐づけてるなら（あなたの既存があれば残す）
+  // conns.add(ws) 等がある場合はそのまま
 
-ws.on("message", (raw) => {
-  console.log("WS IN:", raw.toString()); // ★追加
-  let msg;
-  try {
-    msg = JSON.parse(raw.toString());
-  } catch (e) {
-    console.log("WS JSON parse failed");
-    return;
-  }
+  ws.on("message", (raw) => {
+    // ★ここにログを入れたいなら、この1行だけでOK（括弧崩れない）
+    // console.log("WS IN:", raw.toString());
 
-  console.log("WS TYPE:", msg.type); // ★追加
-
-  // 既存の switch(msg.type) / if(msg.type===...) が続く
-});
-
-    if (msg.type === "CREATE_ROOM") {
-      console.log("CREATE_ROOM called", msg.name);
-      const room = createRoom();
-      const slotIndex = room.players.findIndex((x) => x === null);
-      room.players[slotIndex] = {
-        ws,
-        id: cryptoRandomId(),
-        name: safeName(msg.name),
-        state: newPlayer(),
-      };
-      room.hostIndex = slotIndex;
-
-      send(ws, { type: "WELCOME", youIndex: slotIndex, code: room.code });
-      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
-      return;ws.on
-    }
-
-    if (msg.type === "JOIN_ROOM") {
-      const code = String(msg.code || "").trim().toUpperCase();
-      const room = rooms.get(code);
-      if (!room) return send(ws, { type: "ERROR", message: "Room not found" });
-
-      // find empty slot
-      const slotIndex = room.players.findIndex((x) => x === null);
-      if (slotIndex === -1) return send(ws, { type: "ERROR", message: "Room full" });
-
-      room.players[slotIndex] = {
-        ws,
-        id: cryptoRandomId(),
-        name: safeName(msg.name),
-        state: room.status === "playing" ? newPlayer() : newPlayer(),
-      };
-
-      if (room.hostIndex === null) room.hostIndex = slotIndex;
-
-      send(ws, { type: "WELCOME", youIndex: slotIndex, code: room.code });
-      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
       return;
     }
 
-    // below: must be in a room
+    // ---- ここから下は、あなたの既存の message ハンドラ本文をそのまま残す ----
+    // 重要：この中で return してOK
+
+    // （例）あなたの既存ロジック：
+    // if (msg.type === "PING") ...
+    // if (msg.type === "CREATE_ROOM") ...
+    // if (msg.type === "JOIN_ROOM") ...
+
     const found = findRoomByWs(ws);
     if (!found) return send(ws, { type: "ERROR", message: "Not in room" });
     const { room, index } = found;
@@ -614,7 +578,6 @@ ws.on("message", (raw) => {
       room.pending[index] = { action, target };
       broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
 
-      // resolve when all living have submitted
       const alive = livingIndices(room);
       const allReady = alive.every((i) => room.pending[i]);
       if (allReady) {
@@ -623,18 +586,16 @@ ws.on("message", (raw) => {
       }
       return;
     }
-  
+  });
 
   ws.on("close", () => {
     const found = findRoomByWs(ws);
     if (!found) return;
     const { room, index } = found;
 
-    // mark disconnected slot empty
     room.players[index] = null;
     room.pending[index] = null;
 
-    // move host if needed
     if (room.hostIndex === index) {
       const next = room.players.findIndex(Boolean);
       room.hostIndex = next === -1 ? null : next;
@@ -642,12 +603,12 @@ ws.on("message", (raw) => {
 
     broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
 
-    // delete empty rooms
     if (room.players.every((x) => x === null)) {
       rooms.delete(room.code);
     }
   });
 });
+
 
 function cryptoRandomId() {
   // Node 24 ok without import; fallback if missing
