@@ -61,7 +61,13 @@ const Actions = [
   "BIG_BEAM",
   "TRAP",
   "SEAL",
+
+  // ★新アクション
+  "ELMARICK",
+  "LIFE_UP",
+  "DOMAIN",
 ];
+
 
 function cost(a) {
   switch (a) {
@@ -70,9 +76,16 @@ function cost(a) {
     case "BIG_BEAM": return 4;
     case "TRAP": return 1;
     case "SEAL": return 1;
+
+    // ★新アクション
+    case "ELMARICK": return 4;
+    case "LIFE_UP": return 3;
+    case "DOMAIN": return 3;
+
     default: return 0;
   }
 }
+
 
 function isGuardAction(a) {
   return a === "GUARD" || a === "BEAM_GUARD" || a === "GUARD_CHARGE" || a === "SEAL";
@@ -81,12 +94,15 @@ function isGuardAction(a) {
 function newPlayer() {
   return {
     energy: 0,
-    alive: true,
+    life: 1,              // ★追加
+    alive: true,           // 表示用（判定は life>0）
     trapForcedGuard: false,
     usedGuardCharge: false,
     bannedActions: new Set(),
+    domainTurns: 0,        // ★追加（坐殺博徒）
   };
 }
+
 
 function makeCode(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -114,16 +130,22 @@ function snapshot(room) {
     hostIndex: room.hostIndex,
     turn: room.turn,
     logs: room.logs,
-    players: room.players.map((slot, i) => ({
-      index: i,
-      connected: !!slot,
-      name: slot?.name ?? null,
-      alive: slot?.state?.alive ?? false,
-      energy: slot?.state?.energy ?? 0,
-      trapForcedGuard: slot?.state?.trapForcedGuard ?? false,
-      usedGuardCharge: slot?.state?.usedGuardCharge ?? false,
-      bannedActions: slot?.state ? [...slot.state.bannedActions] : [],
-    })),
+    players: room.players.map((slot, i) => slot ? ({
+  index: i,
+  connected: true,
+  name: slot.name,
+  alive: slot.state.life > 0,
+  energy: slot.state.energy,
+
+  // ★追加
+  life: slot.state.life,
+  domainTurns: slot.state.domainTurns,
+
+  trapForcedGuard: slot.state.trapForcedGuard,
+  usedGuardCharge: slot.state.usedGuardCharge,
+  bannedActions: [...slot.state.bannedActions],
+  }) : null)
+
   };
 }
 
@@ -153,7 +175,7 @@ function roomLog(room, text) {
 function livingIndices(room) {
   return room.players
     .map((slot, i) => ({ slot, i }))
-    .filter(({ slot }) => slot && slot.state.alive)
+    .filter(({ slot }) => slot && slot.state.life > 0)
     .map(({ i }) => i);
 }
 
@@ -210,7 +232,7 @@ function canSelect(room, i, action, target) {
 
 function resolveTurn(room) {
   // must have all living players' pending
-  const alive = livingIndices(room);
+  const alive = livingIndices(room); // ← ここは life>0 で生存判定になってる前提
   for (const i of alive) {
     if (!room.pending[i]) return; // not ready
   }
@@ -229,30 +251,78 @@ function resolveTurn(room) {
       .join(" / ")
   );
 
+  // --- helpers ---
+  const isAlive = (idx) => {
+    const s = room.players[idx]?.state;
+    return !!s && s.life > 0;
+  };
+
+  const damageMap = new Map(); // idx -> totalDamage
+
+  const addDamage = (idx, amount) => {
+    if (!isAlive(idx)) return;
+    damageMap.set(idx, (damageMap.get(idx) ?? 0) + amount);
+  };
+
+  const applyDamages = () => {
+    for (const [i, dmg] of damageMap.entries()) {
+      const p = room.players[i]?.state;
+      if (!p || p.life <= 0) continue;
+      p.life -= dmg;
+      if (p.life < 0) p.life = 0;
+      p.alive = p.life > 0;
+      roomLog(room, `P${i + 1} took ${dmg} dmg (life=${p.life})`);
+    }
+    damageMap.clear();
+  };
+
+  const isDefending = (idx) => {
+    if (!isAlive(idx)) return false;
+    const pick = chosen.get(idx);
+    if (!pick) return false;
+    return isGuardAction(pick.action); // GUARD / BEAM_GUARD / GUARD_CHARGE / SEAL
+  };
+
+  // エルマリックを防げるガード（SEALは防げない）
+  const isGuardForElmarick = (a) => a === "GUARD" || a === "BEAM_GUARD" || a === "GUARD_CHARGE";
+
+  // 当事者間相殺：def が attacker に BIG_BEAM を撃ってたら、def は attacker の ELMARICK を無効化
+  const elmarickCancelledFor = (def, attacker) => {
+    const defPick = chosen.get(def);
+    const attPick = chosen.get(attacker);
+    if (!defPick || !attPick) return false;
+    if (attPick.action !== "ELMARICK") return false;
+    return defPick.action === "BIG_BEAM" && defPick.target === attacker;
+  };
+
   // 1) trap forced check (self lose if not guard)
   for (const i of alive) {
     const p = room.players[i].state;
     const { action } = chosen.get(i);
     if (p.trapForcedGuard && !isGuardAction(action)) {
+      p.life = 0;
       p.alive = false;
       roomLog(room, `P${i + 1} lost by TRAP (didn't guard)`);
     }
   }
 
-  // recompute alive after trap kills
+  // recompute alive after trap loses
   const alive2 = livingIndices(room);
 
-  // helper: is defender guarding this turn?
-  const isDefending = (idx) => {
-    if (!room.players[idx]?.state?.alive) return false;
-    const pick = chosen.get(idx);
-    if (!pick) return false;
-    return isGuardAction(pick.action);
-  };
+  // 2) attacks (directional + ELMARICK)
+  // 2-A) ELMARICK clash check
+  const elUsers = alive2.filter((i) => chosen.get(i)?.action === "ELMARICK");
+  const elClash = elUsers.length >= 2;
 
-  // 2) attacks (directional)
-  const toKill = new Set();
+  if (elClash) {
+    roomLog(room, `ELMARICK clash! (${elUsers.map((i) => `P${i + 1}`).join(", ")})`);
+    // 効果は発動しない／出した人は「0から再始動」
+    for (const i of elUsers) {
+      room.players[i].state.energy = 0;
+    }
+  }
 
+  // 2-B) BEAM / BIG_BEAM
   for (const attacker of alive2) {
     const pick = chosen.get(attacker);
     if (!pick) continue;
@@ -262,8 +332,8 @@ function resolveTurn(room) {
     if (action === "BEAM") {
       const def = chosen.get(target);
       if (!def) continue;
-      const defended = isDefending(target); // GUARD/BEAM_GUARD/GUARD_CHARGE/SEAL
-      if (!defended) toKill.add(target);
+      const defended = isDefending(target); // SEAL含む
+      if (!defended) addDamage(target, 1);
     }
 
     if (action === "BIG_BEAM") {
@@ -271,31 +341,52 @@ function resolveTurn(room) {
       if (!def) continue;
 
       // BIG_BEAM clash only when mutual targeting with BIG_BEAM
-      const mutualClash =
-        def.action === "BIG_BEAM" &&
-        def.target === attacker;
-
+      const mutualClash = def.action === "BIG_BEAM" && def.target === attacker;
       if (mutualClash) {
         roomLog(room, `BIG_BEAM clash between P${attacker + 1} and P${target + 1}`);
         continue;
       }
 
       // only BEAM_GUARD blocks BIG_BEAM
-      if (def.action !== "BEAM_GUARD") toKill.add(target);
+      if (def.action !== "BEAM_GUARD") addDamage(target, 3);
     }
   }
 
-  for (const i of toKill) {
-    if (room.players[i]?.state?.alive) {
-      room.players[i].state.alive = false;
-      roomLog(room, `P${i + 1} was hit!`);
+  // 2-C) ELMARICK single user (no clash)
+  if (!elClash && elUsers.length === 1) {
+    const attacker = elUsers[0];
+
+    for (const def of alive2) {
+      if (def === attacker) continue;
+
+      // 当事者間相殺（defがattackerへ強ビーム撃ってたらdefだけ無効）
+      if (elmarickCancelledFor(def, attacker)) {
+        roomLog(room, `P${def + 1} cancelled ELMARICK from P${attacker + 1} (BIG_BEAM vs attacker)`);
+        continue;
+      }
+
+      const defPick = chosen.get(def);
+      const defended = defPick ? isGuardForElmarick(defPick.action) : false;
+
+      if (defended) {
+        roomLog(room, `P${def + 1} guarded ELMARICK`);
+        // ノーマルガードのみエネルギー0
+        if (defPick.action === "GUARD") {
+          room.players[def].state.energy = 0;
+          roomLog(room, `P${def + 1} energy set to 0 (normal guard vs ELMARICK)`);
+        }
+        // BEAM_GUARD / GUARD_CHARGE はゼロ化しない
+      } else {
+        addDamage(def, 1);
+      }
     }
   }
 
-  // recompute alive after hits
+  // apply damage and recompute alive
+  applyDamages();
   const alive3 = livingIndices(room);
 
-  // 3) effects (SEAL / TRAP) applied by alive attackers only
+  // 3) effects (SEAL / TRAP / LIFE_UP / DOMAIN) applied by alive attackers only
   for (const attacker of alive3) {
     const pick = chosen.get(attacker);
     if (!pick) continue;
@@ -303,23 +394,35 @@ function resolveTurn(room) {
     const { action, target } = pick;
 
     if (action === "TRAP") {
-      if (room.players[target]?.state?.alive) {
+      if (isAlive(target)) {
         room.players[target].state.trapForcedGuard = true;
         roomLog(room, `P${attacker + 1} trapped P${target + 1}`);
       }
     }
 
     if (action === "SEAL") {
-      // SEAL is also defense for attacker (already handled by isGuardAction)
       const targetPick = chosen.get(target);
       if (targetPick && targetPick.action !== "BIG_BEAM") {
         room.players[target].state.bannedActions.add(targetPick.action);
         roomLog(room, `P${attacker + 1} sealed P${target + 1}'s ${targetPick.action}`);
       }
     }
+
+    if (action === "LIFE_UP") {
+      const p = room.players[attacker].state;
+      p.life += 1;
+      p.alive = p.life > 0;
+      roomLog(room, `P${attacker + 1} LIFE_UP (life=${p.life})`);
+    }
+
+    if (action === "DOMAIN") {
+      const p = room.players[attacker].state;
+      p.domainTurns = 4;
+      roomLog(room, `P${attacker + 1} DOMAIN started (4 turns)`);
+    }
   }
 
-  // 4) energy update + trap clear (survivors only)
+  // 4) energy update + trap clear + domain tick (survivors only)
   for (const i of alive3) {
     const p = room.players[i].state;
     const { action } = chosen.get(i);
@@ -327,19 +430,63 @@ function resolveTurn(room) {
     // trap cleared if guarded this turn
     if (p.trapForcedGuard && isGuardAction(action)) p.trapForcedGuard = false;
 
-    if (action === "CHARGE") p.energy += 1;
-    else if (action === "GUARD_CHARGE") {
+    // energy update
+    if (action === "CHARGE") {
+      let gain = 1;
+
+      if (p.domainTurns > 0) {
+        const r = Math.random() * 100;
+
+        if (r < 1) {
+          roomLog(room, `P${i + 1} JACKPOT! Instant win!`);
+          endMatchToLobby(room, `P${i + 1} WIN! (坐殺博徒 JACKPOT)`);
+          return;
+        } else if (r < 1 + 9) {
+          gain = 3;
+          roomLog(room, `P${i + 1} DOMAIN result = +3`);
+        } else if (r < 1 + 9 + 30) {
+          gain = 2;
+          roomLog(room, `P${i + 1} DOMAIN result = +2`);
+        } else {
+          gain = 1;
+          roomLog(room, `P${i + 1} DOMAIN result = +1`);
+        }
+      }
+
+      p.energy += gain;
+    } else if (action === "GUARD_CHARGE") {
       p.energy += 1;
       p.usedGuardCharge = true;
     } else {
-      p.energy -= cost(action);
+      // ELMARICK clash の場合は「0から再始動」優先（ここでは減らさない）
+      if (!(elClash && action === "ELMARICK")) {
+        p.energy -= cost(action);
+      }
+    }
+
+    // domain turn tick (turn-based, not charge-count)
+    if (p.domainTurns > 0) p.domainTurns -= 1;
+
+    // ensure non-negative (好みで。マイナス許容なら削ってOK)
+    if (p.energy < 0) p.energy = 0;
+
+    // sync alive flag
+    p.alive = p.life > 0;
+  }
+
+  // clash後、ELMARICK使用者は確実に0（念押し）
+  if (elClash) {
+    for (const i of elUsers) {
+      if (room.players[i]?.state && room.players[i].state.life > 0) {
+        room.players[i].state.energy = 0;
+      }
     }
   }
 
   room.turn += 1;
   room.pending = [null, null, null, null];
 
-  // 5) win check
+  // 5) win check (life-based)
   const aliveFinal = livingIndices(room);
   if (aliveFinal.length === 1) {
     endMatchToLobby(room, `P${aliveFinal[0] + 1} WIN! (match ended)`);
@@ -352,6 +499,7 @@ function resolveTurn(room) {
 
   broadcast(room, { type: "TURN_RESOLVED", state: snapshot(room) });
 }
+
 
 /** ===== WS protocol =====
  * client -> server:
