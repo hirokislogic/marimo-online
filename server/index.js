@@ -547,6 +547,7 @@ ws.on("message", (raw) => {
 });
 
     if (msg.type === "CREATE_ROOM") {
+      console.log("CREATE_ROOM called", msg.name);
       const room = createRoom();
       const slotIndex = room.players.findIndex((x) => x === null);
       room.players[slotIndex] = {
@@ -646,7 +647,6 @@ ws.on("message", (raw) => {
       rooms.delete(room.code);
     }
   });
-});
 
 function cryptoRandomId() {
   // Node 24 ok without import; fallback if missing
