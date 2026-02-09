@@ -623,7 +623,7 @@ ws.on("message", (raw) => {
       }
       return;
     }
-  });
+  
 
   ws.on("close", () => {
     const found = findRoomByWs(ws);
@@ -647,6 +647,7 @@ ws.on("message", (raw) => {
       rooms.delete(room.code);
     }
   });
+});
 
 function cryptoRandomId() {
   // Node 24 ok without import; fallback if missing
