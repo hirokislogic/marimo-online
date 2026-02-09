@@ -531,9 +531,20 @@ function findRoomByWs(ws) {
 wss.on("connection", (ws) => {
   send(ws, { type: "INFO", message: "connected" });
 
-  ws.on("message", (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
+ws.on("message", (raw) => {
+  console.log("WS IN:", raw.toString()); // ★追加
+  let msg;
+  try {
+    msg = JSON.parse(raw.toString());
+  } catch (e) {
+    console.log("WS JSON parse failed");
+    return;
+  }
+
+  console.log("WS TYPE:", msg.type); // ★追加
+
+  // 既存の switch(msg.type) / if(msg.type===...) が続く
+});
 
     if (msg.type === "CREATE_ROOM") {
       const room = createRoom();
@@ -548,7 +559,7 @@ wss.on("connection", (ws) => {
 
       send(ws, { type: "WELCOME", youIndex: slotIndex, code: room.code });
       broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
-      return;
+      return;ws.on
     }
 
     if (msg.type === "JOIN_ROOM") {
