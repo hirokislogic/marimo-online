@@ -1,17 +1,17 @@
-(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const a of document.querySelectorAll('link[rel="modulepreload"]'))o(a);new MutationObserver(a=>{for(const n of a)if(n.type==="childList")for(const u of n.addedNodes)u.tagName==="LINK"&&u.rel==="modulepreload"&&o(u)}).observe(document,{childList:!0,subtree:!0});function b(a){const n={};return a.integrity&&(n.integrity=a.integrity),a.referrerPolicy&&(n.referrerPolicy=a.referrerPolicy),a.crossOrigin==="use-credentials"?n.credentials="include":a.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function o(a){if(a.ep)return;a.ep=!0;const n=b(a);fetch(a.href,n)}})();const k=document.querySelector("#app"),R=["CHARGE","GUARD_CHARGE","BEAM","GUARD","BEAM_GUARD","BIG_BEAM","TRAP","SEAL"];function w(e){switch(e){case"BEAM":return 1;case"BEAM_GUARD":return 2;case"BIG_BEAM":return 4;case"TRAP":return 1;case"SEAL":return 1;default:return 0}}function m(e){return e==="BEAM"||e==="BIG_BEAM"||e==="TRAP"||e==="SEAL"}function E(e){return e==="GUARD"||e==="BEAM_GUARD"||e==="GUARD_CHARGE"||e==="SEAL"}function B(e){switch(e){case"CHARGE":return"チャージ +1";case"GUARD_CHARGE":return"ガード付きチャージ +1（1回）";case"BEAM":return"ビーム -1（要ターゲット）";case"GUARD":return"ガード 0";case"BEAM_GUARD":return"ビームガード -2";case"BIG_BEAM":return"強ビーム -4（要ターゲット）";case"TRAP":return"罠 -1（要ターゲット）";case"SEAL":return"封印 -1（要ターゲット／そのターン防御）"}}function l(e){return e.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}let r=null,i=null,c="接続中…",s=null,p=null,f=localStorage.getItem("marimo_name")??"player",g="";const G=location.protocol==="https:"?"wss":"ws",x=new WebSocket(`${G}://${location.host}/ws`);x.onopen=()=>{c="接続済み",d()};x.onclose=()=>{c="切断されました",d()};x.onmessage=e=>{const t=JSON.parse(e.data);t.type==="WELCOME"&&(i=t.youIndex,g=t.code??g,c=`入室：${t.code} / あなたは P${i+1}`),t.type==="ROOM_STATE"&&(r=t.state),t.type==="ERROR"&&(c=`エラー: ${t.message}`),d()};function v(e){x.send(JSON.stringify(e))}function A(){return!r||i===null?null:r.players[i]??null}function M(){return!r||i===null?[]:r.players.filter(e=>e.connected&&e.alive&&e.index!==i).map(e=>e.index)}function h(e){const t=A();return t?r?.status==="playing"&&!t.alive?{ok:!1,reason:"死亡中"}:e!=="BIG_BEAM"&&t.bannedActions.includes(e)?{ok:!1,reason:"封印中"}:t.trapForcedGuard&&!E(e)?{ok:!1,reason:"罠：防御必須"}:e==="GUARD_CHARGE"&&t.usedGuardCharge?{ok:!1,reason:"1回使用済み"}:t.energy<w(e)?{ok:!1,reason:"コスト不足"}:{ok:!0}:{ok:!1,reason:"状態未取得"}}function S(){localStorage.setItem("marimo_name",f),v({type:"CREATE_ROOM",name:f})}function T(){localStorage.setItem("marimo_name",f),v({type:"JOIN_ROOM",code:g,name:f})}function O(){v({type:"START"})}function _(e){s=e,m(e)||(p=null),d()}function I(e){p=e,d()}function P(){if(!r||i===null)return;if(!s)return c="行動を選んでね",d();const e=h(s);if(!e.ok)return c=`この行動は選べない：${e.reason??""}`,d();if(m(s)&&p===null)return c="ターゲットを選んでね",d();v({type:"ACTION",action:s,target:p}),c="送信した！",s=null,p=null,d()}function C(e){const t=i!==null&&e.index===i,o=[r?.hostIndex===e.index?'<span class="badge">HOST</span>':"",t?'<span class="badge blue">YOU</span>':"",e.connected?"":'<span class="badge gray">OFF</span>',e.connected&&!e.alive?'<span class="badge red">DEAD</span>':"",e.trapForcedGuard?'<span class="badge amber">TRAP!</span>':""].filter(Boolean).join(" "),a=(e.bannedActions??[]).filter(u=>u!=="BIG_BEAM"),n=a.length?a.join(", "):"なし";return`
-    <div class="card ${t?"me":""}">
+(function(){const n=document.createElement("link").relList;if(n&&n.supports&&n.supports("modulepreload"))return;for(const a of document.querySelectorAll('link[rel="modulepreload"]'))o(a);new MutationObserver(a=>{for(const r of a)if(r.type==="childList")for(const l of r.addedNodes)l.tagName==="LINK"&&l.rel==="modulepreload"&&o(l)}).observe(document,{childList:!0,subtree:!0});function m(a){const r={};return a.integrity&&(r.integrity=a.integrity),a.referrerPolicy&&(r.referrerPolicy=a.referrerPolicy),a.crossOrigin==="use-credentials"?r.credentials="include":a.crossOrigin==="anonymous"?r.credentials="omit":r.credentials="same-origin",r}function o(a){if(a.ep)return;a.ep=!0;const r=m(a);fetch(a.href,r)}})();const k=document.querySelector("#app"),R=["CHARGE","GUARD_CHARGE","BEAM","GUARD","BEAM_GUARD","BIG_BEAM","TRAP","SEAL"];function w(e){switch(e){case"BEAM":return 1;case"BEAM_GUARD":return 2;case"BIG_BEAM":return 4;case"TRAP":return 1;case"SEAL":return 1;default:return 0}}function x(e){return e==="BEAM"||e==="BIG_BEAM"||e==="TRAP"||e==="SEAL"}function E(e){return e==="GUARD"||e==="BEAM_GUARD"||e==="GUARD_CHARGE"||e==="SEAL"}function B(e){switch(e){case"CHARGE":return"チャージ +1";case"GUARD_CHARGE":return"ガード付きチャージ +1（1回）";case"BEAM":return"ビーム -1（要ターゲット）";case"GUARD":return"ガード 0";case"BEAM_GUARD":return"ビームガード -2";case"BIG_BEAM":return"強ビーム -4（要ターゲット）";case"TRAP":return"罠 -1（要ターゲット）";case"SEAL":return"封印 -1（要ターゲット／そのターン防御）"}}function c(e){return e.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;")}let t=null,i=null,p="接続中…",s=null,u=null,f=localStorage.getItem("marimo_name")??"player",g="";const G=location.protocol==="https:"?"wss":"ws",b=new WebSocket(`${G}://${location.host}/ws`);b.onopen=()=>{p="接続済み",d()};b.onclose=()=>{p="切断されました",d()};b.onmessage=e=>{const n=JSON.parse(e.data);n.type==="WELCOME"&&(i=n.youIndex,g=n.code??g,p=`入室：${n.code} / あなたは P${i+1}`),n.type==="ROOM_STATE"&&(t=n.state),n.type==="ERROR"&&(p=`エラー: ${n.message}`),d()};function v(e){b.send(JSON.stringify(e))}function A(){return!t||i===null?null:t.players[i]??null}function M(){return!t||i===null?[]:t.players.filter(e=>e.connected&&e.alive&&e.index!==i).map(e=>e.index)}function h(e){const n=A();return n?t?.status==="playing"&&!n.alive?{ok:!1,reason:"死亡中"}:e!=="BIG_BEAM"&&n.bannedActions.includes(e)?{ok:!1,reason:"封印中"}:n.trapForcedGuard&&!E(e)?{ok:!1,reason:"罠：防御必須"}:e==="GUARD_CHARGE"&&n.usedGuardCharge?{ok:!1,reason:"1回使用済み"}:n.energy<w(e)?{ok:!1,reason:"コスト不足"}:{ok:!0}:{ok:!1,reason:"状態未取得"}}function S(){localStorage.setItem("marimo_name",f),v({type:"CREATE_ROOM",name:f})}function T(){localStorage.setItem("marimo_name",f),v({type:"JOIN_ROOM",code:g,name:f})}function O(){console.log("[UI] START click",{ready:b.readyState,room:t,me:i}),v({type:"START"})}function _(e){s=e,x(e)||(u=null),d()}function I(e){u=e,d()}function C(){if(!t||i===null)return;if(!s)return p="行動を選んでね",d();const e=h(s);if(!e.ok)return p=`この行動は選べない：${e.reason??""}`,d();if(x(s)&&u===null)return p="ターゲットを選んでね",d();v({type:"ACTION",action:s,target:u}),p="送信した！",s=null,u=null,d()}function P(e){const n=i!==null&&e.index===i,o=[t?.hostIndex===e.index?'<span class="badge">HOST</span>':"",n?'<span class="badge blue">YOU</span>':"",e.connected?"":'<span class="badge gray">OFF</span>',e.connected&&!e.alive?'<span class="badge red">DEAD</span>':"",e.trapForcedGuard?'<span class="badge amber">TRAP!</span>':""].filter(Boolean).join(" "),a=(e.bannedActions??[]).filter(l=>l!=="BIG_BEAM"),r=a.length?a.join(", "):"なし";return`
+    <div class="card ${n?"me":""}">
       <div class="row">
         <div class="title">P${e.index+1}</div>
         <div class="badges">${o}</div>
       </div>
-      <div class="sub">${l(e.name??"player")}</div>
+      <div class="sub">${c(e.name??"player")}</div>
       <div class="stats">
         <div>エネルギー <b>${e.energy}</b></div>
-        <div>封印 <b>${l(n)}</b></div>
+        <div>封印 <b>${c(r)}</b></div>
         <div>ガードチャージ <b>${e.usedGuardCharge?"使用済み":"未使用"}</b></div>
       </div>
     </div>
-  `}function d(){A();const e=M(),t=r?`ルーム <b>${r.code}</b> ／ 状態 <b>${r.status}</b> ／ Turn <b>${r.turn}</b> ／ あなた <b>${i!==null?"P"+(i+1):"-"}</b>`:"まだ入室してないよ",b=r&&r.status==="playing";k.innerHTML=`
+  `}function d(){A();const e=M(),n=t?`ルーム <b>${t.code}</b> ／ 状態 <b>${t.status}</b> ／ Turn <b>${t.turn}</b> ／ あなた <b>${i!==null?"P"+(i+1):"-"}</b>`:"まだ入室してないよ",m=t&&t.status==="playing";k.innerHTML=`
   <style>
     *{box-sizing:border-box;}
     :root{
@@ -83,22 +83,27 @@
     <div class="top">
       <div>
         <h2 class="h1">まりもゲーム（4人/ルーム制/指向性）</h2>
-        <div class="meta">${l(c)}</div>
-        <div class="sub">${t}</div>
+        <div class="meta">${c(p)}</div>
+        <div class="sub">${n}</div>
       </div>
     </div>
 
     <div class="bar">
       <div class="row" style="flex-wrap:wrap; gap:10px;">
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <input value="${l(f)}" placeholder="名前" oninput="setName(this.value)" />
+          <input value="${c(f)}" placeholder="名前" oninput="setName(this.value)" />
           <button class="btn" onclick="createRoom()">ルーム作成</button>
         </div>
 
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-          <input value="${l(g)}" placeholder="コード" oninput="setCode(this.value)" />
+          <input value="${c(g)}" placeholder="コード" oninput="setCode(this.value)" />
           <button class="btn" onclick="joinRoom()">参加</button>
-          ${r&&i!==null&&r.hostIndex===i?'<button class="btn" onclick="startMatch()">Start（HOST）</button>':""}
+          ${(()=>{const o=t?t.players.filter(l=>l&&l.connected).length:0,a=t&&i!==null&&t.hostIndex===i,r=!!t&&t.status==="lobby"&&a&&o>=2;return!t||!a?"":`
+             <button class="btn" onclick="startMatch()" ${r?"":"disabled"}
+              title="${r?"":"2人以上で開始できます"}">
+              Start（HOST）
+             </button>
+           `})()}
         </div>
       </div>
       <div class="sub">
@@ -106,16 +111,16 @@
       </div>
     </div>
 
-    ${r?`
+    ${t?`
       <div class="grid">
         <div>
           <div style="font-weight:900;margin-bottom:8px;">プレイヤー</div>
           <div class="players">
-            ${r.players.map(C).join("")}
+            ${t.players.map(P).join("")}
           </div>
         </div>
 
-        ${b?`
+        ${m?`
           <div class="panel">
             <div style="font-weight:900;">行動</div>
             <div class="mut" style="margin-top:6px;">
@@ -123,24 +128,24 @@
             </div>
 
             <div class="actions">
-              ${R.map(o=>{const a=h(o),n=!a.ok,u=s===o,$=n,y=n?a.reason??"":"";return`
+              ${R.map(o=>{const a=h(o),r=!a.ok,l=s===o,$=r,y=r?a.reason??"":"";return`
                     <button
-                      class="aBtn ${u?"pick":""} ${$?"danger":""}"
-                      ${n?"disabled":""}
+                      class="aBtn ${l?"pick":""} ${$?"danger":""}"
+                      ${r?"disabled":""}
                       onclick="pickAction('${o}')"
-                      title="${l(y)}"
+                      title="${c(y)}"
                     >
-                      ${l(B(o))}
-                      <small>cost: ${w(o)} ${y?`／ ${l(y)}`:""}</small>
+                      ${c(B(o))}
+                      <small>cost: ${w(o)} ${y?`／ ${c(y)}`:""}</small>
                     </button>
                   `}).join("")}
             </div>
 
-            ${s&&m(s)?`
+            ${s&&x(s)?`
                   <div style="margin-top:12px;font-weight:900;">ターゲット</div>
                   <div class="targets">
                     ${e.length?e.map(o=>`
-                            <button class="tBtn ${p===o?"pick":""}" onclick="pickTarget(${o})">
+                            <button class="tBtn ${u===o?"pick":""}" onclick="pickTarget(${o})">
                               P${o+1}
                             </button>
                           `).join(""):'<div class="mut">ターゲットがいません（相手がいない/全滅）</div>'}
@@ -151,7 +156,7 @@
               <button class="btn big" onclick="submitAction()">送信</button>
               <div class="big">
                 選択: <b>${s??"-"}</b>
-                ${s&&m(s)?` → <b>${p!==null?"P"+(p+1):"-"}</b>`:""}
+                ${s&&x(s)?` → <b>${u!==null?"P"+(u+1):"-"}</b>`:""}
               </div>
             </div>
           </div>
@@ -160,7 +165,7 @@
         <div class="panel">
           <div style="font-weight:900;">ログ</div>
           <div class="logs">
-            ${r.logs.length?r.logs.map(o=>`<div class="log">${l(o)}</div>`).join(""):'<div class="mut" style="margin-top:10px;">ログなし</div>'}
+            ${t.logs.length?t.logs.map(o=>`<div class="log">${c(o)}</div>`).join(""):'<div class="mut" style="margin-top:10px;">ログなし</div>'}
           </div>
         </div>
       </div>
@@ -173,4 +178,4 @@
       </div>
     `}
   </div>
-  `}window.setName=e=>{f=e,d()};window.setCode=e=>{g=e.toUpperCase().replace(/[^A-Z0-9]/g,""),d()};window.createRoom=()=>S();window.joinRoom=()=>T();window.startMatch=()=>O();window.pickAction=e=>_(e);window.pickTarget=e=>I(e);window.submitAction=()=>P();d();
+  `}window.setName=e=>{f=e,d()};window.setCode=e=>{g=e.toUpperCase().replace(/[^A-Z0-9]/g,""),d()};window.createRoom=()=>S();window.joinRoom=()=>T();window.startMatch=()=>O();window.pickAction=e=>_(e);window.pickTarget=e=>I(e);window.submitAction=()=>C();d();

@@ -157,6 +157,7 @@ function joinRoom() {
   send({ type: "JOIN_ROOM", code: joinCode, name: myName });
 }
 function startMatch() {
+  console.log("[UI] START click", { ready: ws.readyState, room, me });
   send({ type: "START" });
 }
 
@@ -327,10 +328,21 @@ function render() {
           <input value="${escapeHtml(joinCode)}" placeholder="コード" oninput="setCode(this.value)" />
           <button class="btn" onclick="joinRoom()">参加</button>
           ${
-            room && me !== null && room.hostIndex === me
-              ? `<button class="btn" onclick="startMatch()">Start（HOST）</button>`
-              : ``
-          }
+            (() => {
+            const connectedCount = room ? room.players.filter((p) => p && p.connected).length : 0;
+            const isHost = room && me !== null && room.hostIndex === me;
+            const canStart = !!room && room.status === "lobby" && isHost && connectedCount >= 2;
+
+            if (!room || !isHost) return ``;
+
+            return `
+             <button class="btn" onclick="startMatch()" ${canStart ? "" : "disabled"}
+              title="${canStart ? "" : "2人以上で開始できます"}">
+              Start（HOST）
+             </button>
+           `;
+         })()
+       }
         </div>
       </div>
       <div class="sub">
