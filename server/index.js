@@ -528,71 +528,88 @@ function findRoomByWs(ws) {
   return null;
 }
 
+
+function handleCreateRoom(ws, msg) {
+  const name = safeName(msg?.name);
+
+  const room = createRoom();
+  const index = room.players.findIndex((x) => x === null);
+  if (index === -1) return send(ws, { type: "ERROR", message: "Room is full" });
+
+  room.players[index] = { ws, id: cryptoRandomId(), name, state: newPlayer() };
+  room.hostIndex = index;
+
+  send(ws, { type: "WELCOME", youIndex: index, code: room.code });
+  broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+}
+
+function handleJoinRoom(ws, msg) {
+  const code = String(msg?.code ?? "").trim().toUpperCase();
+  const name = safeName(msg?.name);
+
+  const room = rooms.get(code);
+  if (!room) return send(ws, { type: "ERROR", message: "Room not found" });
+
+  const index = room.players.findIndex((x) => x === null);
+  if (index === -1) return send(ws, { type: "ERROR", message: "Room is full" });
+
+  room.players[index] = { ws, id: cryptoRandomId(), name, state: newPlayer() };
+  if (room.hostIndex === null || room.hostIndex === undefined) room.hostIndex = index;
+
+  send(ws, { type: "WELCOME", youIndex: index, code: room.code });
+  broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+}
+
 wss.on("connection", (ws) => {
-  // ここで接続を紐づけてるなら（あなたの既存があれば残す）
-  // conns.add(ws) 等がある場合はそのまま
-
   ws.on("message", (raw) => {
-  let msg;
-  try {
-    msg = JSON.parse(raw.toString());
-  } catch {
-    return;
-  }
-
-  // ★ まず「部屋に入る前に使うやつ」を先に処理する
-  if (msg.type === "CREATE_ROOM") {
-    // ここはあなたの既存の CREATE_ROOM 処理をそのまま置く
-    // 例: createRoom(ws, msg.name) みたいなのがあるなら呼ぶ
-    return handleCreateRoom(ws, msg); // ←あなたの実装名に合わせて
-  }
-
-  if (msg.type === "JOIN_ROOM") {
-    // ここも既存の JOIN_ROOM 処理をそのまま置く
-    return handleJoinRoom(ws, msg);
-  }
-
-  // （もし WELCOME / PING / LIST_ROOMS みたいな「部屋不要」があるならここに置く）
-  // if (msg.type === "PING") return send(ws, { type:"PONG" });
-
-  // ★ ここから下は「部屋が必要」
-  const found = findRoomByWs(ws);
-  if (!found) return send(ws, { type: "ERROR", message: "Not in room" });
-  const { room, index } = found;
-
-  if (msg.type === "START") {
-    if (room.hostIndex !== index) return send(ws, { type: "ERROR", message: "Only host can start" });
-    const connectedCount = room.players.filter(Boolean).length;
-    if (connectedCount < 2) return send(ws, { type: "ERROR", message: "Need 2+ players" });
-
-    resetMatch(room);
-    roomLog(room, "Match started!");
-    broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
-    return;
-  }
-
-  if (msg.type === "ACTION") {
-    if (room.status !== "playing") return send(ws, { type: "ERROR", message: "Match not started" });
-
-    const action = msg.action;
-    const target = (msg.target === 0 || msg.target) ? Number(msg.target) : null;
-
-    const check = canSelect(room, index, action, target);
-    if (!check.ok) return send(ws, { type: "ERROR", message: `Action not allowed: ${check.reason}` });
-
-    room.pending[index] = { action, target };
-    broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
-
-    const alive = livingIndices(room);
-    const allReady = alive.every((i) => room.pending[i]);
-    if (allReady) {
-      resolveTurn(room);
-      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
     }
-    return;
-  }
-});
 
+    // まず「部屋に入る前の操作」
+    if (msg.type === "CREATE_ROOM") return handleCreateRoom(ws, msg);
+    if (msg.type === "JOIN_ROOM") return handleJoinRoom(ws, msg);
+
+    // ここから下は「部屋が必要」
+    const found = findRoomByWs(ws);
+    if (!found) return send(ws, { type: "ERROR", message: "Not in room" });
+    const { room, index } = found;
+
+    if (msg.type === "START") {
+      if (room.hostIndex !== index) return send(ws, { type: "ERROR", message: "Only host can start" });
+      const connectedCount = room.players.filter(Boolean).length;
+      if (connectedCount < 2) return send(ws, { type: "ERROR", message: "Need 2+ players" });
+
+      resetMatch(room);
+      roomLog(room, "Match started!");
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+      return;
+    }
+
+    if (msg.type === "ACTION") {
+      if (room.status !== "playing") return send(ws, { type: "ERROR", message: "Match not started" });
+
+      const action = msg.action;
+      const target = (msg.target === 0 || msg.target) ? Number(msg.target) : null;
+
+      const check = canSelect(room, index, action, target);
+      if (!check.ok) return send(ws, { type: "ERROR", message: `Action not allowed: ${check.reason}` });
+
+      room.pending[index] = { action, target };
+      broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+
+      const alive = livingIndices(room);
+      const allReady = alive.every((i) => room.pending[i]);
+      if (allReady) {
+        resolveTurn(room);
+        broadcast(room, { type: "ROOM_STATE", state: snapshot(room) });
+      }
+      return;
+    }
+  });
 
   ws.on("close", () => {
     const found = findRoomByWs(ws);
@@ -614,6 +631,7 @@ wss.on("connection", (ws) => {
     }
   });
 });
+
 
 
 function cryptoRandomId() {
